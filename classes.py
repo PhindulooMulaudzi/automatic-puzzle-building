@@ -121,24 +121,28 @@ class Piece:
         self.right_edge.info()
 
     def update_edges(self, transform):
-        # TODO: Update the corner and edge information of the puzzle piece
-        #Transfom corners
-        n_column = np.zeros((4, 1)) + 1
-        temp = np.append(self.corners[:, ::-1], n_column, axis  = 1)
-        n_corners = np.dot(temp, transform.transpose())
-        self.corners= n_corners[:, ::-1]
+        # Question 3: TODO: Update the corner and edge information of the puzzle piece
+        column = np.zeros((4, 1)) + 1
+        column = np.append(self.corners[:, ::-1], column, axis  = 1)
+        corners = np.dot(column, transform.transpose())
+		
+		#  flip the coordinates before doing the multiplication
+        self.corners = corners[:, ::-1]
         
         #Update edges
         for edge in self.edge_list[:4]:
             if not edge == None:
-                p_1 = np.append(edge.point1[::-1], 1)
-                p_2 =np.append(edge.point2[::-1], 1)
+			# append 1 to the coordinates and right multiply by the transform
+                point1 = np.append(edge.point1[::-1], 1)
+                point2 = np.append(edge.point2[::-1], 1)
                 
-                p_1 = np.dot(p_1, transform.transpose())
-                p_2 = np.dot(p_2, transform.transpose())
+				# transpose the transform for the right multiplication to work
+                point1 = np.dot(point1, transform.transpose())
+                point2 = np.dot(point2, transform.transpose())
                 
-                edge.point1 = p_1[::-1]
-                edge.point2 = p_2[::-1]
+				# flip back the coordinates after doing the multiplication
+                edge.point1 = point1[::-1]
+                edge.point2 = point2[::-1]
         return
 
     def extract_features(self):
@@ -179,143 +183,126 @@ class Piece:
 
     def insert(self, canvas): # Inserts the piece into the canvas using an affine transformation
         # TODO: Implement this function
-        #Question 1
+        # Question 1
         count_inserted = 0
-        types = ['corner', 'edge', 'interior'] 
+        piece_types = ['corner', 'edge', 'interior'] 
         for edge in self.edge_list[:4]:
             #Make sure the edge has a connected edge
             if not edge.connected_edge == None:
                 if edge.connected_edge.parent_piece.inserted == True:
                     count_inserted += 1
-        if count_inserted > 2:
-            raise Exception("NO MATHCING PIECE TYPES")
-        # else:
-        self.piece_type = types[count_inserted]
-        #--------------------------------------------------------------
+        if count_inserted <= 2:
+            self.piece_type = piece_types[count_inserted]
+        else:
+            raise Exception("INVALID PIECE TYPE")      
         
-        #Question 2 (Corner insertion Case)
-        pts_src = []
-        pts_dst = []
+        # Question 2 (Corner insertion Case)
+        pts_src, pts_dst = [],[]        
         if self.piece_type == 'corner':
-            #Part 1
-            n_flat_edges = 0    
+            # Find two flat edges
+            flat_edge_count = 0
             for edge in self.edge_list[:4]:
-                #Make sure to check if the flat egdes is none
-                if (edge.is_flat == None):
-                    n_flat_edges = n_flat_edges
-                elif (edge.is_flat and n_flat_edges == 0):
+                if (edge.is_flat and flat_edge_count == 0):
                     first_edge = edge
-                    n_flat_edges += 1
+                    flat_edge_count += 1
                 elif(edge.is_flat):
-                    second_edge = edge
-                    
-            #Sanity Check 1: ensure first_edge.point1 == second_edge.point2
-            print("First edge Point 1:", first_edge.point1[::-1])
-            print("First edge Point 2:", first_edge.point2[::-1])
-            print("Second edge Point 1:", second_edge.point1[::-1])
-            print("Second edge Point 2:", second_edge.point2[::-1])
+                    second_edge = edge            
             
+            # Map first_edge.point1 and second_edge.point2 
+            pts_src = np.float32([ first_edge.point2[::-1], first_edge.point1[::-1], second_edge.point2[::-1]])
+            pts_dst = np.float32([[0, 800], [ 0, 800 - abs(first_edge.point2[0] - first_edge.point1[0]) ], [0 + abs(second_edge.point2[1] - second_edge.point1[1]), 800]])
             
-            #Part 2
-            #Corner to Corner 
-            pts_src = np.float32( [ first_edge.point2[::-1], first_edge.point1[::-1], second_edge.point2[::-1] ])
-            pts_dst = np.float32([ [0, 800], [ 0, 800 - abs(first_edge.point2[0] - first_edge.point1[0] ) ], [0 + abs( second_edge.point2[1] - second_edge.point1[1] ), 800]])
-        
-    
-            #Transforms
+            # Use mapping with cv2.getAffineTransform(·) to get the matrix M
             M = cv2.getAffineTransform(pts_src, pts_dst)
             self.dst = cv2.warpAffine (self.image, M, (700, 800))
-            self.mask = cv2.warpAffine(self.mask, M, (700, 800  ))
+            self.mask = cv2.warpAffine(self.mask, M, (700, 800))
             self.update_edges(M)
-            #Potential fix needed
-            canvas.update_canvas(self.mask, self.dst)
-        #Question 3 (Interior piece)
+			
+            # “tattoo” the correct pixels of self.dst onto the canvas
+            canvas.update(self.mask, self.dst)
+		
+		# Question 4 (Interior insertion Case)
         elif(self.piece_type == 'interior'):
             for edge in self.edge_list[:4]:
-                if not edge.connected_edge == None:
-                    if(edge.connected_edge.parent_piece.inserted == True):
-                        if not list(edge.point1[::-1])  in pts_src:
-                            pts_src.append([ edge.point1[::-1][0],edge.point1[::-1][1] ])
-                            pts_dst.append( [ edge.connected_edge.point2[::-1][0], edge.connected_edge.point2[::-1][1] ])
+                if edge.connected_edge != None and edge.connected_edge.parent_piece.inserted == True:
+                    # check if edge.point is already in pts_src (we can’t insert redundant points)
+                    if not list(edge.point1[::-1])  in pts_src:
+                        pts_src.append([ edge.point1[::-1][0],edge.point1[::-1][1]])
+                        pts_dst.append([ edge.connected_edge.point2[::-1][0], edge.connected_edge.point2[::-1][1]])
                         
-                        if not list(edge.point2[::-1])  in pts_src:
-                            pts_src.append([ edge.point2[::-1][0],edge.point2[::-1][1] ])
-                            pts_dst.append( [ edge.connected_edge.point1[::-1][0], edge.connected_edge.point1[::-1][1] ])
+                    if not list(edge.point2[::-1])  in pts_src:
+                        pts_src.append([ edge.point2[::-1][0],edge.point2[::-1][1]])
+                        pts_dst.append([ edge.connected_edge.point1[::-1][0], edge.connected_edge.point1[::-1][1]])            
             
-            
-            #Transforms
-            M = cv2.getAffineTransform( np.float32(pts_src), np.float32(pts_dst) )
+            # Get the Affine Transform M using pts_src and pts_dst
+            M = cv2.getAffineTransform(np.float32(pts_src), np.float32(pts_dst) )
             self.dst = cv2.warpAffine (self.image, M, (700, 800))
             self.mask = cv2.warpAffine(self.mask, M, (700, 800 ))
             self.update_edges(M)
-            canvas.update_canvas(self.mask, self.dst)
+			# “tattoo” the correct pixels of self.dst onto the canvas
+            canvas.update(self.mask, self.dst)
             
-        #Question 4 (edge Piece)
+        #Question 5 (Edge insertion Case)
         elif(self.piece_type == 'edge'):
-            #First step same as interior piece
             for edge in self.edge_list[:4]:
-                if not edge.connected_edge == None:
-                    if(edge.connected_edge.parent_piece.inserted == True):
-                        if not list(edge.point1) in pts_src:
-                            pts_src.append([ edge.point1[::-1][0],edge.point1[::-1][1] ])
-                            pts_dst.append( [ edge.connected_edge.point2[::-1][0], edge.connected_edge.point2[::-1][1] ])
-                        
-
-                        if not list(edge.point2) in pts_src:
-                            pts_src.append([ edge.point2[::-1][0],edge.point2[::-1][1] ])
-                            pts_dst.append( [ edge.connected_edge.point1[::-1][0], edge.connected_edge.point1[::-1][1] ])
-            #get transform ratio
-            tmp_src = np.array(pts_src)
-            tmp_dst = np.array(pts_dst)
-            orig_norm = np.linalg.norm(tmp_src[0] - tmp_src[1])
-            canvas_norm = np.linalg.norm(np.array(tmp_dst[0]- tmp_dst[1]))
+                if edge.connected_edge != None and edge.connected_edge.parent_piece.inserted == True:
+                    # check if edge.point is already in pts_src (we can’t insert redundant points)
+                    if not list(edge.point1) in pts_src:
+                        pts_src.append([ edge.point1[::-1][0],edge.point1[::-1][1]])
+                        pts_dst.append([ edge.connected_edge.point2[::-1][0], edge.connected_edge.point2[::-1][1]])
+					
+                    if not list(edge.point2) in pts_src:
+                        pts_src.append([ edge.point2[::-1][0],edge.point2[::-1][1]])
+                        pts_dst.append([ edge.connected_edge.point1[::-1][0], edge.connected_edge.point1[::-1][1]])
+            
+			# calculate scaling ratio
+            orig_norm = np.linalg.norm(np.array(pts_src[0]) - np.array(pts_src[1]))
+            canvas_norm = np.linalg.norm(np.array(np.array(pts_dst[0])- np.array(pts_dst[1])))
             ratio = orig_norm / canvas_norm
             
-            #Check for 2 cases to get the third coordinate
-            #Case 1 (top/bottom edge)
+            # Calculate the third canvas coordinates point for the two cases
+            # Case 1: Inserting an edge piece which lies along the bottom of the puzzle
             if (pts_dst[0][0]-pts_dst[1][0]) > (pts_dst[0][1]-pts_dst[1][1]):
                 for edge in self.edge_list:
-                    if not edge == None:
-                        if not edge.is_flat == None:
-                            #edge piece will only have one edge that lies alon the canvas
-                            if edge.is_flat:    
-                                pts_src.append([ edge.point2[::-1][0],edge.point2[::-1][1] ])
-                                edge_norm = np.linalg.norm(np.array( [edge.point1[::-1][0],edge.point1[::-1][1]] ) - np.array( [edge.point2[::-1][0], edge.point2[::-1][1]] ) )
-                                pts_dst.append([pts_dst[1][0]+int(ratio*edge_norm),pts_dst[1][1]])
-                                break
+                    if edge != None and edge.is_flat != None:
+                        # obtain 3 canvas coordinates using edge that will lie along the bottom
+                        if edge.is_flat:    
+                            pts_src.append([ edge.point2[::-1][0],edge.point2[::-1][1]])
+                            edge_norm = np.linalg.norm(np.array([edge.point1[::-1][0],edge.point1[::-1][1]]) - np.array([edge.point2[::-1][0], edge.point2[::-1][1]]) )
+                            pts_dst.append([pts_dst[1][0]+int(ratio*edge_norm),pts_dst[1][1]])
+                            break
                             
-                #Add points to canvas
-                #Transforms
-                M = cv2.getAffineTransform( np.float32(pts_src), np.float32(pts_dst) )
+                # Get the Affine Transform M using pts_src and pts_dst
+                M = cv2.getAffineTransform(np.float32(pts_src), np.float32(pts_dst) )
                 self.dst = cv2.warpAffine (self.image, M, (700, 800))
-                self.mask = cv2.warpAffine(self.mask, M, (700, 800  ))
+                self.mask = cv2.warpAffine(self.mask, M, (700, 800))
                 self.update_edges(M)
-                canvas.update_canvas(self.mask, self.dst)
-            # Case 2(left/right edge)
+				# “tattoo” the correct pixels of self.dst onto the canvas
+                canvas.update(self.mask, self.dst)
+            
+            # Case 2: Inserting an edge piece which lies along the left side of the puzzle 
             else:
                 for edge in self.edge_list[::-1]:
-                    if not edge == None:
-                        if not edge.is_flat == None:
-                            #edge piece will only have one edge that lies alon the canvas
-                            if edge.is_flat:
-                                pts_src.append([ edge.point1[::-1][0],edge.point1[::-1][1] ])
-                                edge_norm = np.linalg.norm( np.array([edge.point1[::-1][0],edge.point1[::-1][1]]) - np.array([edge.point2[::-1][0],edge.point2[::-1][1]]) )
-                                pts_dst.append([pts_dst[0][0],pts_dst[0][1] - int(ratio*edge_norm)])
-                                break
+                    if edge != None and edge.is_flat != None:
+                        # obtain 3 canvas coordinates using edge that will lie along left side of the puzzle
+                        if edge.is_flat:
+                            pts_src.append([ edge.point1[::-1][0],edge.point1[::-1][1]])
+                            edge_norm = np.linalg.norm(np.array([edge.point1[::-1][0],edge.point1[::-1][1]]) - np.array([edge.point2[::-1][0],edge.point2[::-1][1]]) )
+                            pts_dst.append([pts_dst[0][0],pts_dst[0][1] - int(ratio*edge_norm)])
+                            break
                 
-                #Transforms
-                M = cv2.getAffineTransform( np.float32(pts_src), np.float32(pts_dst) )
+                # Get the Affine Transform M using pts_src and pts_dst
+                M = cv2.getAffineTransform(np.float32(pts_src), np.float32(pts_dst) )
                 self.dst = cv2.warpAffine (self.image, M, (700, 800))
-                self.mask = cv2.warpAffine(self.mask, M, (700, 800  ))
+                self.mask = cv2.warpAffine(self.mask, M, (700, 800))
                 self.update_edges(M)
-                canvas.update_canvas(self.mask, self.dst)
+				# “tattoo” the correct pixels of self.dst onto the canvas
+                canvas.update(self.mask, self.dst)
                 
         else:
             raise Exception("Invalid piece type")
-                
-            
-            
-        print("Inserting piece: ", self.idx)
+                                       
+        # print("Inserting piece: ", self.idx)
 	    
 
 class Puzzle(object):
@@ -508,19 +495,22 @@ class Canvas:
         #initialize canvas in the puzzle object
         self.canvas = np.zeros((800,700,3))
         
-    def update_canvas(self, mask, dst):
-        #reshape mask into the correct dimensions
-        height, width = mask.shape
-        n_mask = np.zeros((height, width, 3))
-        for c in range(3):
-            n_mask[:, :, c] = mask
-        self.canvas = n_mask * dst + (1 - n_mask)*self.canvas
-        
-    def display_canvas(self):
+    def update(self, mask, dst):
+        # change our mask to have 3 channels to allow for blending with canvas
+        mask = np.dstack([mask,mask,mask])
+		
+		# Use the mask to transfer only the puzzle piece pixels onto the canvas by blending the two
+        self.canvas = mask * dst + (1 - mask)*self.canvas
+    
+    # display current canvas state	
+    def display(self):
         plt.imshow(self.canvas)
         plt.axis(False)
         plt.show()
-        plt.close()
+	
+    # method to return the canvas, just in case we need to display it differently
+    def get(self):
+        return self.canvas
 
 # Create our canvas with the necessary size
 canvas = Canvas()        
