@@ -1,4 +1,3 @@
-
 from natsort import natsorted
 import os
 import re
@@ -8,12 +7,10 @@ import numpy as np
 import matplotlib.pyplot as plt
 import seaborn
 import networkx as nx
-from numba import jit
-from math import cos, sin, sqrt
+
 import sklearn.neighbors
-from math import floor, exp
+
 import imageio
-from cv2 import filter2D
 import cv2
 import skimage
 from skimage import img_as_float32, img_as_ubyte, img_as_uint
@@ -21,11 +18,9 @@ from skimage.feature import canny
 from skimage.color import rgb2gray, rgb2hsv, gray2rgb, rgba2rgb
 from functools import partial
 from tqdm import tqdm
-from scipy.stats import multivariate_normal
 tqdm = partial(tqdm, position=0, leave=True)
 # caching with sane defaults
 from cachier import cachier
-from sklearn.decomposition import PCA
 cachier = partial(cachier, pickle_reload=False, cache_dir='data/cache')
 
 ############################## Stuff for loading and rescaling the puzzle pieces nicely ################################
@@ -55,126 +50,6 @@ MATCH_CORNERS = DATA_CORNERS
 
 print('\n', DATA_IMGS[0].shape, '->', MATCH_IMGS[0].shape)
 
-#Gussian filter
-def globalDoG(dim, sigma, K):
-    offset = floor(dim/2)
-    output = np.zeros((dim, dim))
-    for r in range(dim):
-        x = r - offset
-        for c in range(dim):
-            y = c - offset
-            output[r,c] =  (1 / (2*np.pi*(sigma**2)) )*exp(-( (x**2 + y**2) / (2*(sigma**2)) ) ) - (1 / (2*(K**2)*np.pi*(sigma**2)) )*exp(-( (x**2 + y**2) / (2*(K**2)*(sigma**2)) ) ) 
-    return output
-
-
-def Gaussian(dim, sigma):
-    offset = floor(dim/2)
-    output = np.zeros((dim, dim))
-    for r in range(dim):
-        x = offset - r
-        for c in range(dim):
-            y = offset - c
-            output[r,c] = (1 / (2*np.pi*(sigma**2)) )*exp(-( (x**2 + y**2) / (2*(sigma**2)) ) ) 
-    return output
-
-# Returns gaussian
-def GEBF(theta, sigma_x, sigma_y, dim, f_type):
-    """f_type:""Edge, Bar
-        theta: must be in radians"""
-    offset = floor(dim/2)
-    output = np.zeros((dim, dim))
-    for r in range(dim):
-        x = r - offset
-        for c in range(dim):
-            y = c - offset
-            x_d = x_dash(x, y, theta)
-            y_d = y_dash(x, y, theta)
-            if f_type == 'Edge':
-                output[r, c] = f(x_d, sigma_x)*f(y_d, sigma_y)*((-y_d)/(sigma_y**2))
-            else:
-                output[r, c] = f(x_d, sigma_x)*f(y_d, sigma_y)*( (y_d**2 - sigma_y**2) / (sigma_y**4) )
-
-    return output
-
-def initialize_filters(): 
-    #define parameters
-    sigma = []
-    theta =[]
-    #For sigma
-    sigma.append((1,1))
-    sigma.append((2,2))
-    sigma.append((3,4))
-    #for theta
-    theta.append((np.pi * (3/6)))
-    theta.append((np.pi * (2/6)))
-    theta.append(np.pi * (1/6))
-    theta.append(0)
-    theta.append((np.pi * (5/6)))
-    theta.append((np.pi * (4/6)))
-    RFS_bank = np.zeros((6, 6, 7,7))
-    #add edge filters
-    for s in range (len(sigma)):
-        for t in  range (len(theta)):
-            RFS_bank[s][t] = GEBF(theta[t], sigma[s][0], sigma[s][1], 7, 'Edge')
-
-
-    #add bar filters
-    for s in range (len(sigma)):
-        for t in  range (len(theta)):
-            RFS_bank[s+3][t] = GEBF(theta[t], sigma[s][0], sigma[s][1], 7, 'Bar')
-
-    return RFS_bank
-
-@jit(nopython = True)
-def get_max_im (curr, height, width, n_classes):
-    dim = curr[0].flatten().shape[0]
-    temp = np.zeros((6,dim))
-    output = np.zeros(dim)
-    for k in range (len(curr)):
-        temp[k] = curr[k].flatten()
-        
-    for k in range(dim):
-        m_val  = np.amax(temp[:,k])
-        output[k] = m_val
-        
-    return output.reshape(height, width, n_classes)
-
-def LoG(dim, sigma):
-    offset = np.ceil(dim/2)
-    x = np.arange(-offset+1, offset, 1)
-    y = np.arange(-offset + 1, offset, 1)
-    xx, yy = np.meshgrid(x,y)
-    a = -(1/(np.pi*(sigma**4)))
-    b = (1 - (xx**2 + yy**2)/(2*(sigma**2)) )
-    c = np.exp( -(xx**2 + yy**2) / (2*(sigma**2)) )
-    return a*b*c
-
-def f(x, sigma):
-    return ( 1 / (sqrt(2*np.pi)*sigma) )*exp(- ( x**2 / (2*(sigma**2) ) ))
-
-def x_dash(x, y, theta) :
-    return x*cos(theta) - y*sin(theta)
-
-def y_dash (x, y, theta) :
-    return x*sin(theta) + y*cos(theta)
-#function to get MR8 features 
-def get_MR8_features(im_111 = None, RFS_bank = None, width = 256, height = 192, n_classes = 3):
-    filt_im = np.zeros((6,6,height, width, n_classes))
-    #filter images (will break your computer)
-    for r in range(6):
-        for c in range(6):
-            filt_im[r][c] = filter2D(im_111, -1,  RFS_bank[r][c])
-    #get MR8 Filter break(Good bye CPU)
-    MR8 = np.zeros((8, height, width, n_classes))
-    for k in range(len(filt_im)):
-        MR8[k] = get_max_im(filt_im[k], height, width, n_classes)
-    MR8[6] = filter2D(im_111, -1, Gaussian(7, 3))
-    MR8[7] = filter2D(im_111, -1, LoG(7, 3))
-    for m in range(len(MR8)):
-        MR8[m] = abs(MR8[m])
-        MR8[m] = MR8[m] / np.amax(MR8[m])
-    return MR8
-
 ################################################ Define our three classes #############################################
 class Edge:
     def __init__(self, point1, point2, contour, parent_piece):
@@ -191,7 +66,6 @@ class Edge:
 
 class Piece:
     def __init__(self, image, idx):
-
         self.piece_type = None
         self.inserted = False
         # Keep track of where the pieces corner's are. Used to construct the edge variables
@@ -214,21 +88,6 @@ class Piece:
         self.mask = None
         # Holds image after mapping
         self.dst = None
-        self.features_RGB = None
-        self.features_DoG = None
-        self.features_HSV = None
-        self.features_MR8 = None
-        self.features_PCAReduced = None
-        self.RGB_foreground = None
-        self.RGB_background = None
-        self.DoG_foreground = None
-        self.DoG_background = None
-        self.HSV_foreground = None
-        self.HSV_background = None
-        self.MR8_background = None
-        self.MR8_foreground = None
-        self.PCAReduced_foreground = None
-        self.PCAReduced_background = None
         # ~=~=~=~=~=~=~=~=~=~=~=~=~=~ #
         self.extract_features()
         self.classify_pixels()
@@ -245,7 +104,7 @@ class Piece:
         plt.show()
         plt.close()
 
-    def x(self): # Prints the coordinates of the puzzle piece's corners
+    def print_corners(self): # Prints the coordinates of the puzzle piece's corners
         print("Top left: ", self.top_left)
         print("top right: ", self.top_right)
         print("bottom right: ", self.bottom_right)
@@ -262,6 +121,7 @@ class Piece:
         self.right_edge.info()
 
     def update_edges(self, transform):
+        # TODO: Update the corner and edge information of the puzzle piece
         #Transfom corners
         n_column = np.zeros((4, 1)) + 1
         temp = np.append(self.corners[:, ::-1], n_column, axis  = 1)
@@ -285,53 +145,13 @@ class Piece:
         # Function which will extract all the necessary features to classify pixels
         # into background and foreground
         # Should take no input and use self.image. Returns the features image (Not for Lab 7)
-        DoG = filter2D( self.image,-1,  globalDoG(7, np.sqrt(10), 1.25) )
-    
-        height, width, n_channels = self.image.shape
-        im_HSV = cv2.cvtColor(self.image, cv2.COLOR_RGB2HSV)
-        self.features_RGB = np.zeros((height*width, n_channels))
-        self.features_DoG = np.zeros((height*width, n_channels))
-        self.features_HSV= np.zeros((height*width, n_channels))
-        for c in range(n_channels):
-            #RGB features
-            self.features_RGB[:, c] = self.image[:, :, c].flatten()
-            #DoG features
-            self.features_DoG[:, c] = DoG[:, :, c].flatten()
-            #HSV features
-            self.features_HSV[:, c] = im_HSV[:, :, c].flatten() / np.amax(im_HSV[:, :, c])
-            
-        #MR8 features
-        RFS_Bank = initialize_filters()
-        MR8 = get_MR8_features(self.image, RFS_Bank)
-        n_images, _, _, _= MR8.shape
-        n_features = n_images*n_channels
-        n_pixels = height*width
-        self.features_MR8 = np.zeros((n_pixels, n_features))
-        for m in range(n_images):
-            for c in range(n_channels):
-                self.features_MR8[:, (m*n_channels)+c] = MR8[m][:, :, c].flatten()
-        self.features_PCAReduced = PCA(n_components=3).fit_transform(self.features_MR8)
+        return
 
     def classify_pixels(self):
         # Uses the feature image from self.extract_features to classify pixels
         # into foreground and background pixels. Returns the inferred mask
         # and should update self.mask with this update as we need it in future (Not for Lab 7)
-        self.mask = np.round(MATCH_MSKS[self.idx])
-        self.RGB_foreground = self.features_RGB[self.mask.flatten() == 1]
-        self.RGB_background = self.features_RGB[self.mask.flatten() == 0]
-        #DoG features
-        self.DoG_foreground = self.features_DoG[self.mask.flatten() == 1]
-        self.DoG_background = self.features_DoG[self.mask.flatten() == 0]
-        #HSV features
-        self.HSV_foreground = self.features_HSV[self.mask.flatten() == 1]
-        self.HSV_background = self.features_HSV[self.mask.flatten() == 0]
-        #MR8 features
-        self.MR8_foreground = self.features_MR8[self.mask.flatten() == 1]
-        self.MR8_background = self.features_MR8[self.mask.flatten() == 0]
-        #PCA reduced MR8 Features
-        self.PCAReduced_foreground= self.features_PCAReduced[self.mask.flatten() == 1]
-        self.PCAReduced_background = self.features_PCAReduced[self.mask.flatten() == 0]
-        
+        self.mask = MATCH_MSKS[self.idx]
 
     def find_corners(self):
         # Finds the corners of the puzzle piece (should use self.mask). Needs to update
@@ -356,14 +176,9 @@ class Piece:
         self.bottom_edge = Edge(self.bottom_left, self.bottom_right, None, self) #2
         self.right_edge = Edge(self.bottom_right, self.top_right, None, self) #3
         self.edge_list = [self.top_edge, self.left_edge, self.bottom_edge, self.right_edge, None]
-    
 
     def insert(self, canvas): # Inserts the piece into the canvas using an affine transformation
-        #Columns = 700
-        #Rows = 800
-        #Initialzie puzzle object
-        # TODO: Implement this functio
-        
+        # TODO: Implement this function
         #Question 1
         count_inserted = 0
         types = ['corner', 'edge', 'interior'] 
@@ -511,7 +326,7 @@ class Puzzle(object):
             for idx, img in tqdm(enumerate(imgs), 'Generating Pieces')
         ]
         self._fill_connections()
-    
+
     def _fill_connections(self):
         connections = np.ones((48,4,2))*-1
         connections[0,2] = [26,1]
@@ -686,7 +501,7 @@ class Puzzle(object):
                 else:
                     self.pieces[i].edge_list[j].is_flat = True
 
-
+# Create our canvas with the necessary size
 class Canvas:
     
     def __init__(self):
@@ -708,4 +523,4 @@ class Canvas:
         plt.close()
 
 # Create our canvas with the necessary size
-canvas = Canvas()               
+canvas = Canvas()        
